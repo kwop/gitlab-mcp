@@ -360,6 +360,8 @@ const REMOTE_AUTHORIZATION = process.env.REMOTE_AUTHORIZATION === "true";
 const SESSION_TIMEOUT_SECONDS = process.env.SESSION_TIMEOUT_SECONDS ? parseInt(process.env.SESSION_TIMEOUT_SECONDS) : 3600;
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = process.env.PORT || 3002;
+// Cloudflare Access token for protected GitLab instances
+const CF_TOKEN = process.env.CF_TOKEN;
 // Add proxy configuration
 const HTTP_PROXY = process.env.HTTP_PROXY;
 const HTTPS_PROXY = process.env.HTTPS_PROXY;
@@ -497,6 +499,7 @@ const sessionAuthStore = new AsyncLocalStorage<SessionAuth>();
 const BASE_HEADERS: Record<string, string> = {
   Accept: "application/json",
   "Content-Type": "application/json",
+  ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
 };
 
 /**
