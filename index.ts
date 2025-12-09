@@ -2,6 +2,7 @@
 
 import {
   getConfig,
+  CF_TOKEN,
   ENABLE_DYNAMIC_API_URL,
   GITLAB_AUTH_COOKIE_PATH,
   GITLAB_CA_CERT_PATH,
@@ -1223,6 +1224,7 @@ const authBySession: Record<string, AuthData> = {};
 const BASE_HEADERS: Record<string, string> = {
   Accept: "application/json",
   "Content-Type": "application/json",
+  ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
 };
 
 /**
