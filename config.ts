@@ -32,6 +32,8 @@ export function getConfig(
 export const GITLAB_PERSONAL_ACCESS_TOKEN = getConfig("token", "GITLAB_PERSONAL_ACCESS_TOKEN");
 export const GITLAB_JOB_TOKEN = getConfig("job-token", "GITLAB_JOB_TOKEN");
 export const GITLAB_AUTH_COOKIE_PATH = getConfig("cookie-path", "GITLAB_AUTH_COOKIE_PATH");
+// Cloudflare Access token for GitLab instances protected by Cloudflare Access
+export const CF_TOKEN = getConfig("cf-token", "CF_TOKEN");
 export const USE_OAUTH = getConfig("use-oauth", "GITLAB_USE_OAUTH") === "true";
 export const IS_OLD = getConfig("is-old", "GITLAB_IS_OLD") === "true";
 

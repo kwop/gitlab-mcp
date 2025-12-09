@@ -2,6 +2,7 @@
 
 import {
   getConfig,
+  CF_TOKEN,
   ENABLE_DYNAMIC_API_URL,
   GITLAB_AUTH_COOKIE_PATH,
   GITLAB_ALLOW_UNAUTHENTICATED_TOOL_DISCOVERY,
@@ -1508,6 +1509,7 @@ function updateSessionPublicBaseUrl(sessionId: string | undefined, publicBaseUrl
 const BASE_HEADERS: Record<string, string> = {
   Accept: "application/json",
   "Content-Type": "application/json",
+  ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
 };
 
 /**

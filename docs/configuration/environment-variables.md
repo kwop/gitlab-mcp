@@ -21,6 +21,10 @@ Optional GitLab CI job token.
 
 Optional Netscape cookie file path for cookie-based authentication.
 
+### `CF_TOKEN`
+
+Cloudflare Access token for GitLab instances protected by Cloudflare Access. When set, the `cf-access-token` header is included in all GitLab API requests. CLI arg: `--cf-token`.
+
 ### `GITLAB_USE_OAUTH`
 
 Set to `true` to enable local browser-based OAuth2 authentication.
