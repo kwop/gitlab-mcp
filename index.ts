@@ -649,6 +649,8 @@ const SESSION_TIMEOUT_SECONDS = Number.parseInt(
 );
 const HOST = getConfig("host", "HOST") || "127.0.0.1";
 const PORT = Number.parseInt(getConfig("port", "PORT", "3002"), 10);
+// Cloudflare Access token for protected GitLab instances
+const CF_TOKEN = getConfig("cf-token", "CF_TOKEN");
 // Add proxy configuration
 const HTTP_PROXY = getConfig("http-proxy", "HTTP_PROXY");
 const HTTPS_PROXY = getConfig("https-proxy", "HTTPS_PROXY");
@@ -852,6 +854,7 @@ const authBySession: Record<string, AuthData> = {};
 const BASE_HEADERS: Record<string, string> = {
   Accept: "application/json",
   "Content-Type": "application/json",
+  ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
 };
 
 /**
