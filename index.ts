@@ -2174,19 +2174,37 @@ async function updateMergeRequestDiscussionNote(
 
 /**
  * Update an issue discussion note
+ *
+ * Note: Only one of `body` or `resolved` can be provided per GitLab API requirements.
+ * At least one parameter must be provided.
+ *
  * @param {string} projectId - The ID or URL-encoded path of the project
- * @param {number} issueIid - The IID of an issue
+ * @param {number|string} issueIid - The IID of an issue
  * @param {string} discussionId - The ID of a thread
- * @param {number} noteId - The ID of a thread note
- * @param {string} body - The new content of the note
+ * @param {number|string} noteId - The ID of a thread note
+ * @param {string} [body] - The new content of the note (optional, mutually exclusive with resolved)
+ * @param {boolean} [resolved] - Resolve (true) or unresolve (false) the thread (optional, mutually exclusive with body)
  * @returns {Promise<GitLabDiscussionNote>} The updated note
+ *
+ * @example
+ * // Resolve a thread
+ * await updateIssueNote('mygroup/myproject', 123, 'abc123', 456, undefined, true);
+ *
+ * @example
+ * // Unresolve a thread
+ * await updateIssueNote('mygroup/myproject', 123, 'abc123', 456, undefined, false);
+ *
+ * @example
+ * // Update note body
+ * await updateIssueNote('mygroup/myproject', 123, 'abc123', 456, 'Updated content');
  */
 async function updateIssueNote(
   projectId: string,
   issueIid: number | string,
   discussionId: string,
   noteId: number | string,
-  body: string
+  body?: string,
+  resolved?: boolean
 ): Promise<GitLabDiscussionNote> {
   projectId = decodeURIComponent(projectId); // Decode project ID
   const url = new URL(
@@ -2195,7 +2213,13 @@ async function updateIssueNote(
     )}/issues/${issueIid}/discussions/${discussionId}/notes/${noteId}`
   );
 
-  const payload = { body };
+  // Only one of body or resolved can be sent according to GitLab API
+  const payload: { body?: string; resolved?: boolean } = {};
+  if (body !== undefined) {
+    payload.body = body;
+  } else if (resolved !== undefined) {
+    payload.resolved = resolved;
+  }
 
   const response = await fetch(url.toString(), {
     ...getFetchConfig(),
@@ -2366,7 +2390,9 @@ async function getMergeRequestNotes(
   projectId: string,
   mergeRequestIid: string,
   sort?: "asc" | "desc",
-  order_by?: "created_at" | "updated_at"
+  order_by?: "created_at" | "updated_at",
+  per_page?: number,
+  page?: number
 ): Promise<GitLabDiscussionNote[]> {
   projectId = decodeURIComponent(projectId); // Decode project ID
   const url = new URL(
@@ -2381,6 +2407,14 @@ async function getMergeRequestNotes(
 
   if (order_by) {
     url.searchParams.append("order_by", order_by);
+  }
+
+  if (per_page) {
+    url.searchParams.append("per_page", per_page.toString());
+  }
+
+  if (page) {
+    url.searchParams.append("page", page.toString());
   }
 
   const response = await fetch(url.toString(), {
@@ -5704,7 +5738,9 @@ async function handleToolCall(params: any) {
           args.project_id,
           args.merge_request_iid,
           args.sort,
-          args.order_by
+          args.order_by,
+          args.per_page,
+          args.page
         );
 
         return {
@@ -5733,7 +5769,8 @@ async function handleToolCall(params: any) {
           args.issue_iid,
           args.discussion_id,
           args.note_id,
-          args.body
+          args.body,
+          args.resolved
         );
         return {
           content: [{ type: "text", text: JSON.stringify(note, null, 2) }],
