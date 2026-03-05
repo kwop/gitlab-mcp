@@ -1,6 +1,6 @@
 {
   "name": "@zereight/mcp-gitlab",
-  "version": "2.0.25",
+  "version": "2.0.30",
   "description": "MCP server for using the GitLab API",
   "license": "MIT",
   "author": "zereight",
@@ -29,7 +29,7 @@
     "changelog": "auto-changelog -p",
     "test": "npm run test:all",
     "test:all": "npm run build && npm run test:mock && npm run test:live",
-    "test:mock": "npx tsx --test test/remote-auth-simple-test.ts && tsx test/oauth-tests.ts && tsx test/test-list-merge-requests.ts && tsx test/test-list-project-members.ts",
+    "test:mock": "npx tsx --test test/remote-auth-simple-test.ts && tsx test/oauth-tests.ts && tsx test/test-list-merge-requests.ts && tsx test/test-list-project-members.ts && tsx test/test-download-attachment.ts",
     "test:live": "node test/validate-api.js",
     "test:remote-auth": "npm run build && npx tsx --test test/remote-auth-simple-test.ts",
     "test:oauth": "tsx test/oauth-tests.ts",
@@ -37,6 +37,7 @@
     "test:approvals": "npm run build && tsx test/test-merge-request-approvals.ts",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
+    "release": "bash scripts/release.sh",
     "format": "prettier --write \"**/*.{js,ts,json,md}\"",
     "format:check": "prettier --check \"**/*.{js,ts,json,md}\""
   },

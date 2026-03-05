@@ -6,11 +6,11 @@ const cliArgs: Record<string, string> = {};
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
-  if (arg.startsWith('--')) {
-    const [key, value] = arg.slice(2).split('=');
+  if (arg.startsWith("--")) {
+    const [key, value] = arg.slice(2).split("=");
     if (value) {
       cliArgs[key] = value;
-    } else if (i + 1 < args.length && !args[i + 1].startsWith('--')) {
+    } else if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
       cliArgs[key] = args[++i];
     }
   }
@@ -292,17 +292,104 @@ try {
   // Intentionally ignored: version read failure is non-critical
 }
 
-const server = new Server(
-  {
-    name: "better-gitlab-mcp-server",
-    version: SERVER_VERSION,
-  },
-  {
-    capabilities: {
-      tools: {},
+/**
+ * Create a new MCP Server instance with request handlers registered.
+ * Each transport connection gets its own Server instance to prevent
+ * cross-client data leakage (GHSA-345p-7cg4-v4c7).
+ */
+function createServer(): Server {
+  // Precompute filtered tool list once at server creation (Steps 1–5 are static)
+  // Step 1: Toolset filter — keep tools in enabled toolsets
+  const toolsAfterToolsets = allTools.filter(tool =>
+    isToolInEnabledToolset(tool.name, enabledToolsets)
+  );
+
+  // Step 2: Add GITLAB_TOOLS (individual tools bypass toolset filter)
+  const toolsetToolNames = new Set(toolsAfterToolsets.map(t => t.name));
+  const toolsAfterIndividual = [
+    ...toolsAfterToolsets,
+    ...allTools.filter(
+      tool => individuallyEnabledTools.has(tool.name) && !toolsetToolNames.has(tool.name)
+    ),
+  ];
+
+  // Step 3: Add legacy flag overrides (USE_PIPELINE, USE_MILESTONE, USE_GITLAB_WIKI)
+  const afterIndividualNames = new Set(toolsAfterIndividual.map(t => t.name));
+  const toolsAfterLegacy = [
+    ...toolsAfterIndividual,
+    ...allTools.filter(
+      tool => featureFlagOverrides.has(tool.name) && !afterIndividualNames.has(tool.name)
+    ),
+  ];
+
+  // Step 4: Read-only filter
+  const toolsAfterReadOnly = GITLAB_READ_ONLY_MODE
+    ? toolsAfterLegacy.filter(tool => readOnlyTools.has(tool.name))
+    : toolsAfterLegacy;
+
+  // Step 5: Regex denial filter
+  const precomputedFilteredTools = GITLAB_DENIED_TOOLS_REGEX
+    ? toolsAfterReadOnly.filter(tool => !GITLAB_DENIED_TOOLS_REGEX!.test(tool.name))
+    : toolsAfterReadOnly;
+
+  const serverInstance = new Server(
+    {
+      name: "better-gitlab-mcp-server",
+      version: SERVER_VERSION,
     },
-  }
-);
+    {
+      capabilities: {
+        tools: {},
+      },
+    }
+  );
+
+  serverInstance.setRequestHandler(ListToolsRequestSchema, async () => {
+    // Step 6: Gemini $schema cleanup (only dynamic step per request)
+    // <<< START: Remove $schema for Gemini compatibility >>>
+    const tools = precomputedFilteredTools.map(tool => {
+      // Check if inputSchema exists and is an object
+      if (tool.inputSchema && typeof tool.inputSchema === "object" && tool.inputSchema !== null) {
+        // Remove $schema key if present
+        if ("$schema" in tool.inputSchema) {
+          // Create a new object to preserve immutability (optional but recommended)
+          const modifiedSchema = { ...tool.inputSchema };
+          delete modifiedSchema.$schema;
+          return { ...tool, inputSchema: modifiedSchema };
+        }
+      }
+      // Return as-is if no modification needed
+      return tool;
+    });
+    // <<< END: Remove $schema for Gemini compatibility >>>
+
+    return {
+      tools, // return tool list with $schema removed
+    };
+  });
+
+  serverInstance.setRequestHandler(CallToolRequestSchema, async (request: any) => {
+    // Manually retrieve the session context using the session ID passed in the request.
+    // This is a robust workaround for AsyncLocalStorage context loss.
+    const sessionId = request.params.sessionId;
+    if (REMOTE_AUTHORIZATION && sessionId && authBySession[sessionId]) {
+      const authData = authBySession[sessionId];
+      const sessionContext: SessionAuth = {
+        sessionId,
+        header: authData.header,
+        token: authData.token,
+        lastUsed: authData.lastUsed,
+        apiUrl: authData.apiUrl,
+      };
+      // Run the handler within the retrieved context
+      return await sessionAuthStore.run(sessionContext, () => handleToolCall(request.params));
+    }
+    // Fallback for non-remote-auth mode or if session is not found
+    return handleToolCall(request.params);
+  });
+
+  return serverInstance;
+}
 
 /**
  * Validate configuration at startup
@@ -346,7 +433,7 @@ function validateConfiguration(): void {
   }
 
   // Validate PORT
-  const portStr = getConfig('port', 'PORT');
+  const portStr = getConfig("port", "PORT");
   if (portStr) {
     const port = Number.parseInt(portStr, 10);
     if (Number.isNaN(port) || port < 1 || port > 65535) {
@@ -355,7 +442,7 @@ function validateConfiguration(): void {
   }
 
   // Validate GITLAB_API_URL format
-  const apiUrls = getConfig('api-url', 'GITLAB_API_URL')?.split(",") || [];
+  const apiUrls = getConfig("api-url", "GITLAB_API_URL")?.split(",") || [];
   if (apiUrls.length > 0) {
     for (const url of apiUrls) {
       try {
@@ -367,16 +454,19 @@ function validateConfiguration(): void {
   }
 
   // Validate auth configuration
-  const remoteAuth = getConfig('remote-auth', 'REMOTE_AUTHORIZATION') === "true";
-  const useOAuth = getConfig('use-oauth', 'GITLAB_USE_OAUTH') === "true";
-  const hasToken = !!getConfig('token', 'GITLAB_PERSONAL_ACCESS_TOKEN');
-  const hasCookie = !!getConfig('cookie-path', 'GITLAB_AUTH_COOKIE_PATH');
+  const remoteAuth = getConfig("remote-auth", "REMOTE_AUTHORIZATION") === "true";
+  const useOAuth = getConfig("use-oauth", "GITLAB_USE_OAUTH") === "true";
+  const hasToken = !!getConfig("token", "GITLAB_PERSONAL_ACCESS_TOKEN");
+  const hasCookie = !!getConfig("cookie-path", "GITLAB_AUTH_COOKIE_PATH");
 
   if (!remoteAuth && !useOAuth && !hasToken && !hasCookie) {
-    errors.push('Either --token, --cookie-path, --use-oauth=true, or --remote-auth=true must be set (or use environment variables)');
+    errors.push(
+      "Either --token, --cookie-path, --use-oauth=true, or --remote-auth=true must be set (or use environment variables)"
+    );
   }
 
-  const enableDynamicApiUrl = getConfig('enable-dynamic-api-url', 'ENABLE_DYNAMIC_API_URL') === "true";
+  const enableDynamicApiUrl =
+    getConfig("enable-dynamic-api-url", "ENABLE_DYNAMIC_API_URL") === "true";
   if (enableDynamicApiUrl && !remoteAuth) {
     errors.push("ENABLE_DYNAMIC_API_URL=true requires REMOTE_AUTHORIZATION=true");
   }
@@ -390,34 +480,73 @@ function validateConfiguration(): void {
   logger.info("Configuration validation passed");
 }
 
-const GITLAB_PERSONAL_ACCESS_TOKEN = getConfig('token', 'GITLAB_PERSONAL_ACCESS_TOKEN');
+const GITLAB_PERSONAL_ACCESS_TOKEN = getConfig("token", "GITLAB_PERSONAL_ACCESS_TOKEN");
 let OAUTH_ACCESS_TOKEN: string | null = null;
-const GITLAB_AUTH_COOKIE_PATH = getConfig('cookie-path', 'GITLAB_AUTH_COOKIE_PATH');
-const USE_OAUTH = getConfig('use-oauth', 'GITLAB_USE_OAUTH') === "true";
-const IS_OLD = getConfig('is-old', 'GITLAB_IS_OLD') === "true";
-const GITLAB_READ_ONLY_MODE = getConfig('read-only', 'GITLAB_READ_ONLY_MODE') === "true";
-const GITLAB_DENIED_TOOLS_REGEX = getConfig('denied-tools-regex', 'GITLAB_DENIED_TOOLS_REGEX')
-  ? new RegExp(getConfig('denied-tools-regex', 'GITLAB_DENIED_TOOLS_REGEX')!)
-  : undefined;
-const USE_GITLAB_WIKI = getConfig('use-wiki', 'USE_GITLAB_WIKI') === "true";
-const USE_MILESTONE = getConfig('use-milestone', 'USE_MILESTONE') === "true";
-const USE_PIPELINE = getConfig('use-pipeline', 'USE_PIPELINE') === "true";
-const SSE = getConfig('sse', 'SSE') === "true";
-const STREAMABLE_HTTP = getConfig('streamable-http', 'STREAMABLE_HTTP') === "true";
-const REMOTE_AUTHORIZATION = getConfig('remote-auth', 'REMOTE_AUTHORIZATION') === "true";
-const ENABLE_DYNAMIC_API_URL = getConfig('enable-dynamic-api-url', 'ENABLE_DYNAMIC_API_URL') === "true";
-const SESSION_TIMEOUT_SECONDS = Number.parseInt(getConfig('session-timeout', 'SESSION_TIMEOUT_SECONDS', '3600'), 10);
-const HOST = getConfig('host', 'HOST') || '127.0.0.1';
-const PORT = Number.parseInt(getConfig('port', 'PORT', '3002'), 10);
+const GITLAB_AUTH_COOKIE_PATH = getConfig("cookie-path", "GITLAB_AUTH_COOKIE_PATH");
+const USE_OAUTH = getConfig("use-oauth", "GITLAB_USE_OAUTH") === "true";
+const IS_OLD = getConfig("is-old", "GITLAB_IS_OLD") === "true";
+const GITLAB_READ_ONLY_MODE = getConfig("read-only", "GITLAB_READ_ONLY_MODE") === "true";
+const GITLAB_DENIED_TOOLS_REGEX = (() => {
+  const pattern = getConfig("denied-tools-regex", "GITLAB_DENIED_TOOLS_REGEX");
+  if (!pattern) return undefined;
+
+  // Reject patterns that are too long (potential ReDoS vector)
+  const MAX_PATTERN_LENGTH = 200;
+  if (pattern.length > MAX_PATTERN_LENGTH) {
+    logger.error(
+      `GITLAB_DENIED_TOOLS_REGEX pattern exceeds ${MAX_PATTERN_LENGTH} chars. Ignoring.`
+    );
+    return undefined;
+  }
+
+  // Reject patterns with nested quantifiers that can cause catastrophic backtracking (ReDoS)
+  // e.g., (a+)+, (a*)+, (a+)*, (a{1,})+
+  const NESTED_QUANTIFIER_PATTERN = /(\(.*[+*?].*\)|\[.*\])[+*?]|\(\?[^:)]/;
+  if (NESTED_QUANTIFIER_PATTERN.test(pattern)) {
+    logger.error(
+      `GITLAB_DENIED_TOOLS_REGEX contains potentially unsafe nested quantifiers. Ignoring.`
+    );
+    return undefined;
+  }
+
+  try {
+    const regex = new RegExp(pattern);
+    // Dry-run against a sample string to catch immediate issues
+    regex.test("sample_tool_name");
+    return regex;
+  } catch {
+    logger.error(`Invalid GITLAB_DENIED_TOOLS_REGEX pattern: "${pattern}". Ignoring.`);
+    return undefined;
+  }
+})();
+const USE_GITLAB_WIKI = getConfig("use-wiki", "USE_GITLAB_WIKI") === "true";
+const USE_MILESTONE = getConfig("use-milestone", "USE_MILESTONE") === "true";
+const USE_PIPELINE = getConfig("use-pipeline", "USE_PIPELINE") === "true";
+const GITLAB_TOOLSETS_RAW = getConfig("toolsets", "GITLAB_TOOLSETS");
+const GITLAB_TOOLS_RAW = getConfig("tools", "GITLAB_TOOLS");
+const SSE = getConfig("sse", "SSE") === "true";
+const STREAMABLE_HTTP = getConfig("streamable-http", "STREAMABLE_HTTP") === "true";
+const REMOTE_AUTHORIZATION = getConfig("remote-auth", "REMOTE_AUTHORIZATION") === "true";
+const ENABLE_DYNAMIC_API_URL =
+  getConfig("enable-dynamic-api-url", "ENABLE_DYNAMIC_API_URL") === "true";
+const SESSION_TIMEOUT_SECONDS = Number.parseInt(
+  getConfig("session-timeout", "SESSION_TIMEOUT_SECONDS", "3600"),
+  10
+);
+const HOST = getConfig("host", "HOST") || "127.0.0.1";
+const PORT = Number.parseInt(getConfig("port", "PORT", "3002"), 10);
 // Cloudflare Access token for protected GitLab instances
-const CF_TOKEN = getConfig('cf-token', 'CF_TOKEN');
+const CF_TOKEN = getConfig("cf-token", "CF_TOKEN");
 // Add proxy configuration
-const HTTP_PROXY = getConfig('http-proxy', 'HTTP_PROXY');
-const HTTPS_PROXY = getConfig('https-proxy', 'HTTPS_PROXY');
-const NODE_TLS_REJECT_UNAUTHORIZED = getConfig('tls-reject-unauthorized', 'NODE_TLS_REJECT_UNAUTHORIZED');
-const GITLAB_CA_CERT_PATH = getConfig('ca-cert-path', 'GITLAB_CA_CERT_PATH');
-const GITLAB_POOL_MAX_SIZE = getConfig('pool-max-size', 'GITLAB_POOL_MAX_SIZE')
-  ? Number.parseInt(getConfig('pool-max-size', 'GITLAB_POOL_MAX_SIZE')!, 10)
+const HTTP_PROXY = getConfig("http-proxy", "HTTP_PROXY");
+const HTTPS_PROXY = getConfig("https-proxy", "HTTPS_PROXY");
+const NODE_TLS_REJECT_UNAUTHORIZED = getConfig(
+  "tls-reject-unauthorized",
+  "NODE_TLS_REJECT_UNAUTHORIZED"
+);
+const GITLAB_CA_CERT_PATH = getConfig("ca-cert-path", "GITLAB_CA_CERT_PATH");
+const GITLAB_POOL_MAX_SIZE = getConfig("pool-max-size", "GITLAB_POOL_MAX_SIZE")
+  ? Number.parseInt(getConfig("pool-max-size", "GITLAB_POOL_MAX_SIZE")!, 10)
   : 100;
 
 let sslOptions = undefined;
@@ -451,7 +580,7 @@ httpAgent = httpAgent || new Agent();
 
 // Initialize the client pool for managing multiple GitLab instances
 const clientPool = new GitLabClientPool({
-  apiUrls: (process.env.GITLAB_API_URL || "https://gitlab.com")
+  apiUrls: (getConfig("api-url", "GITLAB_API_URL") || "https://gitlab.com")
     .split(",")
     .map(normalizeGitLabApiUrl),
   httpProxy: HTTP_PROXY,
@@ -679,47 +808,47 @@ const getFetchConfig = () => {
 };
 
 const toJSONSchema = (schema: z.ZodTypeAny) => {
-  const jsonSchema = zodToJsonSchema(schema, { $refStrategy: 'none' });
-  
+  const jsonSchema = zodToJsonSchema(schema, { $refStrategy: "none" });
+
   // Post-process to fix nullable/optional fields that should truly be optional
   function fixNullableOptional(obj: any): any {
-    if (obj && typeof obj === 'object') {
+    if (obj && typeof obj === "object") {
       // If this object has properties, process them
       if (obj.properties) {
         const requiredSet = new Set<string>(obj.required || []);
         Object.keys(obj.properties).forEach(key => {
           const prop = obj.properties[key];
-          
+
           // Handle fields that can be null or omitted
           // If a property has type: ["object", "null"] or anyOf with null, it should not be required
-          if (prop.anyOf && prop.anyOf.some((t: any) => t.type === 'null')) {
+          if (prop.anyOf && prop.anyOf.some((t: any) => t.type === "null")) {
             requiredSet.delete(key);
-          } else if (Array.isArray(prop.type) && prop.type.includes('null')) {
+          } else if (Array.isArray(prop.type) && prop.type.includes("null")) {
             requiredSet.delete(key);
           }
-          
+
           // Recursively process nested objects
           obj.properties[key] = fixNullableOptional(prop);
         });
         // Normalize the required array after processing all properties
         if (requiredSet.size > 0) {
           obj.required = Array.from(requiredSet);
-        } else if (Object.prototype.hasOwnProperty.call(obj, 'required')) {
+        } else if (Object.prototype.hasOwnProperty.call(obj, "required")) {
           delete obj.required;
         }
       }
-      
+
       // Process anyOf/allOf/oneOf
-      ['anyOf', 'allOf', 'oneOf'].forEach(combiner => {
+      ["anyOf", "allOf", "oneOf"].forEach(combiner => {
         if (obj[combiner]) {
           obj[combiner] = obj[combiner].map(fixNullableOptional);
         }
       });
     }
-    
+
     return obj;
   }
-  
+
   return fixNullableOptional(jsonSchema);
 };
 
@@ -1225,7 +1354,8 @@ const allTools = [
   },
   {
     name: "download_attachment",
-    description: "Download an uploaded file from a GitLab project by secret and filename",
+    description:
+      "Download an uploaded file from a GitLab project by secret and filename. Image files (png, jpg, gif, webp, svg, bmp, ico) are returned inline as base64 image content so the AI can view them directly. Non-image files are saved to disk. Use local_path to force saving image files to disk instead.",
     inputSchema: toJSONSchema(DownloadAttachmentSchema),
   },
   {
@@ -1372,6 +1502,301 @@ const pipelineToolNames = new Set([
   "cancel_pipeline_job",
 ]);
 
+// --- Toolset definitions ---
+
+type ToolsetId =
+  | "merge_requests"
+  | "issues"
+  | "repositories"
+  | "branches"
+  | "projects"
+  | "labels"
+  | "pipelines"
+  | "milestones"
+  | "wiki"
+  | "releases"
+  | "users";
+
+interface ToolsetDefinition {
+  readonly id: ToolsetId;
+  readonly isDefault: boolean;
+  readonly tools: ReadonlySet<string>;
+}
+
+const TOOLSET_DEFINITIONS: readonly ToolsetDefinition[] = [
+  {
+    id: "merge_requests",
+    isDefault: true,
+    tools: new Set([
+      "merge_merge_request",
+      "approve_merge_request",
+      "unapprove_merge_request",
+      "get_merge_request_approval_state",
+      "get_merge_request",
+      "get_merge_request_diffs",
+      "list_merge_request_diffs",
+      "list_merge_request_versions",
+      "get_merge_request_version",
+      "update_merge_request",
+      "create_merge_request",
+      "list_merge_requests",
+      "get_branch_diffs",
+      "mr_discussions",
+      "create_merge_request_note",
+      "update_merge_request_note",
+      "delete_merge_request_note",
+      "get_merge_request_note",
+      "get_merge_request_notes",
+      "delete_merge_request_discussion_note",
+      "update_merge_request_discussion_note",
+      "create_merge_request_discussion_note",
+      "get_draft_note",
+      "list_draft_notes",
+      "create_draft_note",
+      "update_draft_note",
+      "delete_draft_note",
+      "publish_draft_note",
+      "bulk_publish_draft_notes",
+      "create_merge_request_thread",
+      "resolve_merge_request_thread",
+    ]),
+  },
+  {
+    id: "issues",
+    isDefault: true,
+    tools: new Set([
+      "create_issue",
+      "list_issues",
+      "my_issues",
+      "get_issue",
+      "update_issue",
+      "delete_issue",
+      "create_issue_note",
+      "update_issue_note",
+      "list_issue_links",
+      "list_issue_discussions",
+      "get_issue_link",
+      "create_issue_link",
+      "delete_issue_link",
+      "create_note",
+    ]),
+  },
+  {
+    id: "repositories",
+    isDefault: true,
+    tools: new Set([
+      "search_repositories",
+      "create_repository",
+      "get_file_contents",
+      "push_files",
+      "create_or_update_file",
+      "fork_repository",
+      "get_repository_tree",
+    ]),
+  },
+  {
+    id: "branches",
+    isDefault: true,
+    tools: new Set([
+      "create_branch",
+      "list_commits",
+      "get_commit",
+      "get_commit_diff",
+    ]),
+  },
+  {
+    id: "projects",
+    isDefault: true,
+    tools: new Set([
+      "get_project",
+      "list_projects",
+      "list_project_members",
+      "list_namespaces",
+      "get_namespace",
+      "verify_namespace",
+      "list_group_projects",
+      "list_group_iterations",
+    ]),
+  },
+  {
+    id: "labels",
+    isDefault: true,
+    tools: new Set([
+      "list_labels",
+      "get_label",
+      "create_label",
+      "update_label",
+      "delete_label",
+    ]),
+  },
+  {
+    id: "pipelines",
+    isDefault: false,
+    tools: new Set([
+      "list_pipelines",
+      "get_pipeline",
+      "list_pipeline_jobs",
+      "list_pipeline_trigger_jobs",
+      "get_pipeline_job",
+      "get_pipeline_job_output",
+      "create_pipeline",
+      "retry_pipeline",
+      "cancel_pipeline",
+      "play_pipeline_job",
+      "retry_pipeline_job",
+      "cancel_pipeline_job",
+    ]),
+  },
+  {
+    id: "milestones",
+    isDefault: false,
+    tools: new Set([
+      "list_milestones",
+      "get_milestone",
+      "create_milestone",
+      "edit_milestone",
+      "delete_milestone",
+      "get_milestone_issue",
+      "get_milestone_merge_requests",
+      "promote_milestone",
+      "get_milestone_burndown_events",
+    ]),
+  },
+  {
+    id: "wiki",
+    isDefault: false,
+    tools: new Set([
+      "list_wiki_pages",
+      "get_wiki_page",
+      "create_wiki_page",
+      "update_wiki_page",
+      "delete_wiki_page",
+    ]),
+  },
+  {
+    id: "releases",
+    isDefault: true,
+    tools: new Set([
+      "list_releases",
+      "get_release",
+      "create_release",
+      "update_release",
+      "delete_release",
+      "create_release_evidence",
+      "download_release_asset",
+    ]),
+  },
+  {
+    id: "users",
+    isDefault: true,
+    tools: new Set([
+      "get_users",
+      "list_events",
+      "get_project_events",
+      "upload_markdown",
+      "download_attachment",
+    ]),
+  },
+] as const;
+
+// Derived lookup: tool name → toolset ID
+const TOOLSET_BY_TOOL_NAME = new Map<string, ToolsetId>();
+for (const def of TOOLSET_DEFINITIONS) {
+  for (const tool of def.tools) {
+    if (TOOLSET_BY_TOOL_NAME.has(tool)) {
+      logger.warn(
+        `Tool "${tool}" is defined in multiple toolsets: "${TOOLSET_BY_TOOL_NAME.get(tool)}" and "${def.id}"`
+      );
+    }
+    TOOLSET_BY_TOOL_NAME.set(tool, def.id);
+  }
+}
+
+const DEFAULT_TOOLSET_IDS: ReadonlySet<ToolsetId> = new Set(
+  TOOLSET_DEFINITIONS.filter(d => d.isDefault).map(d => d.id)
+);
+
+const ALL_TOOLSET_IDS: ReadonlySet<ToolsetId> = new Set(
+  TOOLSET_DEFINITIONS.map(d => d.id)
+);
+
+function parseEnabledToolsets(raw: string | undefined): ReadonlySet<ToolsetId> {
+  if (!raw || raw.trim() === "") {
+    return DEFAULT_TOOLSET_IDS;
+  }
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === "all") {
+    return ALL_TOOLSET_IDS;
+  }
+  const selected = new Set(
+    trimmed
+      .split(",")
+      .map(s => s.trim())
+      .filter((s): s is ToolsetId => ALL_TOOLSET_IDS.has(s as ToolsetId))
+  );
+  if (selected.size === 0) {
+    logger.warn(
+      `No valid toolsets found in configuration (${raw}). Falling back to default toolsets.`
+    );
+    return DEFAULT_TOOLSET_IDS;
+  }
+  return selected;
+}
+
+function parseIndividualTools(raw: string | undefined): ReadonlySet<string> {
+  if (!raw || raw.trim() === "") {
+    return new Set();
+  }
+  const allToolNames = new Set(allTools.map((t: { name: string }) => t.name));
+  const parsed = raw
+    .trim()
+    .split(",")
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean);
+  const unknown = parsed.filter(name => !allToolNames.has(name));
+  if (unknown.length > 0) {
+    logger.warn(`Unknown tool names in GITLAB_TOOLS (will be ignored): ${unknown.join(", ")}`);
+  }
+  return new Set(parsed);
+}
+
+function buildFeatureFlagOverrides(): ReadonlySet<string> {
+  const overrides = new Set<string>();
+  if (USE_GITLAB_WIKI) {
+    for (const t of wikiToolNames) overrides.add(t);
+  }
+  if (USE_MILESTONE) {
+    for (const t of milestoneToolNames) overrides.add(t);
+  }
+  if (USE_PIPELINE) {
+    for (const t of pipelineToolNames) overrides.add(t);
+  }
+  return overrides;
+}
+
+function isToolInEnabledToolset(
+  toolName: string,
+  enabledToolsets: ReadonlySet<ToolsetId>
+): boolean {
+  const toolsetId = TOOLSET_BY_TOOL_NAME.get(toolName);
+  // Tools not in any toolset (e.g. execute_graphql) are excluded by default
+  if (toolsetId === undefined) return false;
+  return enabledToolsets.has(toolsetId);
+}
+
+// Compute at startup
+const enabledToolsets = parseEnabledToolsets(GITLAB_TOOLSETS_RAW);
+const individuallyEnabledTools = parseIndividualTools(GITLAB_TOOLS_RAW);
+const featureFlagOverrides = buildFeatureFlagOverrides();
+
+// Warn about potentially confusing configuration
+if (GITLAB_TOOLSETS_RAW && (USE_PIPELINE || USE_MILESTONE || USE_GITLAB_WIKI)) {
+  logger.warn(
+    "GITLAB_TOOLSETS is set alongside legacy flags (USE_PIPELINE, USE_MILESTONE, USE_GITLAB_WIKI). " +
+    "Legacy flags add tools additively on top of the toolset selection and may produce unexpected results."
+  );
+}
+
 /**
  * Smart URL handling for GitLab API
  *
@@ -1393,7 +1818,7 @@ function normalizeGitLabApiUrl(url: string): string {
 }
 
 // Use the normalizeGitLabApiUrl function to handle various URL formats
-const GITLAB_API_URLS = (process.env.GITLAB_API_URL || "https://gitlab.com")
+const GITLAB_API_URLS = (getConfig("api-url", "GITLAB_API_URL") || "https://gitlab.com")
   .split(",")
   .map(normalizeGitLabApiUrl);
 const GITLAB_API_URL = GITLAB_API_URLS[0];
@@ -1505,7 +1930,7 @@ async function forkProject(projectId: string, namespace?: string): Promise<GitLa
     method: "POST",
   });
 
-  // 이미 존재하는 프로젝트인 경우 처리
+  // Handle case where project already exists
   if (response.status === 409) {
     throw new Error("Project already exists in the target namespace");
   }
@@ -1585,7 +2010,7 @@ async function getFileContents(
   const effectiveProjectId = getEffectiveProjectId(projectId);
   const encodedPath = encodeURIComponent(filePath);
 
-  // ref가 없는 경우 default branch를 가져옴
+  // Fall back to default branch if ref is not provided
   if (!ref) {
     ref = await getDefaultBranchRef(projectId);
   }
@@ -1600,7 +2025,7 @@ async function getFileContents(
     ...getFetchConfig(),
   });
 
-  // 파일을 찾을 수 없는 경우 처리
+  // Handle file not found
   if (response.status === 404) {
     throw new Error(`File not found: ${filePath}`);
   }
@@ -1609,7 +2034,7 @@ async function getFileContents(
   const data = await response.json();
   const parsedData = GitLabContentSchema.parse(data);
 
-  // Base64로 인코딩된 파일 내용을 UTF-8로 디코딩
+  // Decode Base64-encoded file content to UTF-8
   if (!Array.isArray(parsedData) && parsedData.content) {
     parsedData.content = Buffer.from(parsedData.content, "base64").toString("utf8");
     parsedData.encoding = "utf8";
@@ -1648,7 +2073,7 @@ async function createIssue(
     }),
   });
 
-  // 잘못된 요청 처리
+  // Handle bad request
   if (response.status === 400) {
     const errorBody = await response.text();
     throw new Error(`Invalid request: ${errorBody}`);
@@ -3084,12 +3509,12 @@ async function getMergeRequestApprovalState(
  */
 async function createNote(
   projectId: string,
-  noteableType: "issue" | "merge_request", // 'issue' 또는 'merge_request' 타입 명시
+  noteableType: "issue" | "merge_request", // specifies 'issue' or 'merge_request' type
   noteableIid: number | string,
   body: string
 ): Promise<any> {
   projectId = decodeURIComponent(projectId); // Decode project ID
-  // ⚙️ 응답 타입은 GitLab API 문서에 따라 조정 가능
+  // ⚙️ Response type can be adjusted according to the GitLab API documentation
   const url = new URL(
     `${getEffectiveApiUrl()}/projects/${encodeURIComponent(
       getEffectiveProjectId(projectId)
@@ -3164,6 +3589,7 @@ async function listDraftNotes(
  * @param {string} projectId - The ID or URL-encoded path of the project
  * @param {number|string} mergeRequestIid - The internal ID of the merge request
  * @param {string} body - The content of the draft note
+ * @param {string} [inReplyToDiscussionId] - The ID of a discussion the draft note replies to
  * @param {MergeRequestThreadPosition} [position] - Position information for diff notes
  * @param {boolean} [resolveDiscussion] - Whether to resolve the discussion when publishing
  * @returns {Promise<GitLabDraftNote>} The created draft note
@@ -3172,6 +3598,7 @@ async function createDraftNote(
   projectId: string,
   mergeRequestIid: number | string,
   body: string,
+  inReplyToDiscussionId?: string,
   position?: MergeRequestThreadPosition,
   resolveDiscussion?: boolean
 ): Promise<GitLabDraftNote> {
@@ -3183,6 +3610,9 @@ async function createDraftNote(
   );
 
   const requestBody: any = { note: body };
+  if (inReplyToDiscussionId) {
+    requestBody.in_reply_to_discussion_id = inReplyToDiscussionId;
+  }
   if (position) {
     requestBody.position = position;
   }
@@ -5075,12 +5505,35 @@ async function markdownUpload(projectId: string, filePath: string): Promise<GitL
   return GitLabMarkdownUploadSchema.parse(data);
 }
 
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+};
+
+function getImageMimeType(filename: string): string | null {
+  const ext = path.extname(filename).toLowerCase();
+  return IMAGE_MIME_TYPES[ext] ?? null;
+}
+
+interface DownloadAttachmentResult {
+  buffer: Buffer;
+  filename: string;
+  mimeType: string | null;
+  savedPath?: string;
+}
+
 async function downloadAttachment(
   projectId: string,
   secret: string,
   filename: string,
   localPath?: string
-): Promise<string> {
+): Promise<DownloadAttachmentResult> {
   const effectiveProjectId = getEffectiveProjectId(projectId);
 
   const url = new URL(
@@ -5100,15 +5553,36 @@ async function downloadAttachment(
   }
 
   // Get the file content as buffer
-  const buffer = await response.arrayBuffer();
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const mimeType = getImageMimeType(filename);
 
-  // Determine the save path
-  const savePath = localPath ? path.join(localPath, filename) : filename;
+  // For non-image files, always save to disk.
+  // For image files, only save to disk if local_path is explicitly provided.
+  if (!mimeType || localPath) {
+    let savePath: string;
+    if (localPath) {
+      const normalizedLocalPath = path.normalize(localPath);
+      if (
+        path.isAbsolute(normalizedLocalPath) ||
+        normalizedLocalPath === ".." ||
+        normalizedLocalPath.startsWith(".." + path.sep) ||
+        normalizedLocalPath.includes(path.sep + ".." + path.sep)
+      ) {
+        throw new Error("Invalid local_path: directory traversal is not allowed.");
+      }
+      savePath = path.join(normalizedLocalPath, filename);
+    } else {
+      savePath = filename;
+    }
+    const dir = path.dirname(savePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(savePath, buffer);
+    return { buffer, filename, mimeType, savedPath: savePath };
+  }
 
-  // Write the file to disk
-  fs.writeFileSync(savePath, Buffer.from(buffer));
-
-  return savePath;
+  return { buffer, filename, mimeType };
 }
 
 /**
@@ -5374,62 +5848,8 @@ async function downloadReleaseAsset(
   return await response.text();
 }
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  // Apply read-only filter first
-  const tools0 = GITLAB_READ_ONLY_MODE
-    ? allTools.filter(tool => readOnlyTools.has(tool.name))
-    : allTools;
-  // Toggle wiki tools by USE_GITLAB_WIKI flag
-  const tools1 = USE_GITLAB_WIKI ? tools0 : tools0.filter(tool => !wikiToolNames.has(tool.name));
-  // Toggle milestone tools by USE_MILESTONE flag
-  const tools2 = USE_MILESTONE ? tools1 : tools1.filter(tool => !milestoneToolNames.has(tool.name));
-  // Toggle pipeline tools by USE_PIPELINE flag
-  let tools = USE_PIPELINE ? tools2 : tools2.filter(tool => !pipelineToolNames.has(tool.name));
-  tools = GITLAB_DENIED_TOOLS_REGEX
-    ? tools.filter(tool => !GITLAB_DENIED_TOOLS_REGEX.test(tool.name))
-    : tools;
-
-  // <<< START: Gemini 호환성을 위해 $schema 제거 >>>
-  tools = tools.map(tool => {
-    // inputSchema가 존재하고 객체인지 확인
-    if (tool.inputSchema && typeof tool.inputSchema === "object" && tool.inputSchema !== null) {
-      // $schema 키가 존재하면 삭제
-      if ("$schema" in tool.inputSchema) {
-        // 불변성을 위해 새로운 객체 생성 (선택적이지만 권장)
-        const modifiedSchema = { ...tool.inputSchema };
-        delete modifiedSchema.$schema;
-        return { ...tool, inputSchema: modifiedSchema };
-      }
-    }
-    // 변경이 필요 없으면 그대로 반환
-    return tool;
-  });
-  // <<< END: Gemini 호환성을 위해 $schema 제거 >>>
-
-  return {
-    tools, // $schema가 제거된 도구 목록 반환
-  };
-});
-
-server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
-  // Manually retrieve the session context using the session ID passed in the request.
-  // This is a robust workaround for AsyncLocalStorage context loss.
-  const sessionId = request.params.sessionId;
-  if (REMOTE_AUTHORIZATION && sessionId && authBySession[sessionId]) {
-    const authData = authBySession[sessionId];
-    const sessionContext: SessionAuth = {
-      sessionId,
-      header: authData.header,
-      token: authData.token,
-      lastUsed: authData.lastUsed,
-      apiUrl: authData.apiUrl,
-    };
-    // Run the handler within the retrieved context
-    return await sessionAuthStore.run(sessionContext, () => handleToolCall(request.params));
-  }
-  // Fallback for non-remote-auth mode or if session is not found
-  return handleToolCall(request.params);
-});
+// Request handlers are now registered inside createServer() factory function
+// to ensure each transport connection gets its own Server instance (GHSA-345p-7cg4-v4c7).
 
 /**
  * Filter diffs by excluded file patterns
@@ -5446,7 +5866,7 @@ function filterDiffsByPatterns<T extends { new_path: string }>(
   if (!excludedFilePatterns?.length) return diffs;
 
   const regexPatterns = excludedFilePatterns
-    .map((pattern) => {
+    .map(pattern => {
       try {
         return new RegExp(pattern);
       } catch (e) {
@@ -5460,10 +5880,10 @@ function filterDiffsByPatterns<T extends { new_path: string }>(
 
   const matchesAnyPattern = (path: string): boolean => {
     if (!path) return false;
-    return regexPatterns.some((regex) => regex.test(path));
+    return regexPatterns.some(regex => regex.test(path));
   };
 
-  return diffs.filter((diff) => !matchesAnyPattern(diff.new_path));
+  return diffs.filter(diff => !matchesAnyPattern(diff.new_path));
 }
 
 async function handleToolCall(params: any) {
@@ -5834,10 +6254,7 @@ async function handleToolCall(params: any) {
 
       case "list_merge_request_versions": {
         const args = ListMergeRequestVersionsSchema.parse(params.arguments);
-        const versions = await listMergeRequestVersions(
-          args.project_id,
-          args.merge_request_iid
-        );
+        const versions = await listMergeRequestVersions(args.project_id, args.merge_request_iid);
         return {
           content: [{ type: "text", text: JSON.stringify(versions, null, 2) }],
         };
@@ -6078,12 +6495,13 @@ async function handleToolCall(params: any) {
 
       case "create_draft_note": {
         const args = CreateDraftNoteSchema.parse(params.arguments);
-        const { project_id, merge_request_iid, body, position, resolve_discussion } = args;
+        const { project_id, merge_request_iid, body, in_reply_to_discussion_id, position, resolve_discussion } = args;
 
         const draftNote = await createDraftNote(
           project_id,
           merge_request_iid,
           body,
+          in_reply_to_discussion_id,
           position,
           resolve_discussion
         );
@@ -6742,15 +7160,33 @@ async function handleToolCall(params: any) {
 
       case "download_attachment": {
         const args = DownloadAttachmentSchema.parse(params.arguments);
-        const filePath = await downloadAttachment(
+        const result = await downloadAttachment(
           args.project_id,
           args.secret,
           args.filename,
           args.local_path
         );
+
+        if (result.mimeType && !args.local_path) {
+          // Return image inline as base64 so the AI can see it
+          const base64 = result.buffer.toString("base64");
+          return {
+            content: [
+              { type: "image", data: base64, mimeType: result.mimeType },
+              {
+                type: "text",
+                text: JSON.stringify({ filename: result.filename, mimeType: result.mimeType }, null, 2),
+              },
+            ],
+          };
+        }
+
         return {
           content: [
-            { type: "text", text: JSON.stringify({ success: true, file_path: filePath }, null, 2) },
+            {
+              type: "text",
+              text: JSON.stringify({ success: true, file_path: result.savedPath }, null, 2),
+            },
           ],
         };
       }
@@ -6906,8 +7342,9 @@ function determineTransportMode(): TransportMode {
  * Start server with stdio transport
  */
 async function startStdioServer(): Promise<void> {
+  const serverInstance = createServer();
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  await serverInstance.connect(transport);
 }
 
 /**
@@ -6918,12 +7355,13 @@ async function startSSEServer(): Promise<void> {
   const transports: { [sessionId: string]: SSEServerTransport } = {};
 
   app.get("/sse", async (_: Request, res: Response) => {
+    const serverInstance = createServer();
     const transport = new SSEServerTransport("/messages", res);
     transports[transport.sessionId] = transport;
     res.on("close", () => {
       delete transports[transport.sessionId];
     });
-    await server.connect(transport);
+    await serverInstance.connect(transport);
   });
 
   app.post("/messages", async (req: Request, res: Response) => {
@@ -7210,8 +7648,10 @@ async function startStreamableHTTPServer(): Promise<void> {
             }
           };
 
-          // Connect transport to MCP server
-          await server.connect(transport);
+          // Create a new Server instance per session to prevent
+          // cross-client data leakage (GHSA-345p-7cg4-v4c7)
+          const serverInstance = createServer();
+          await serverInstance.connect(transport);
 
           // Handle the request - context is already set up in the outer handleRequest wrapper
           await transport.handleRequest(req, res, req.body);
