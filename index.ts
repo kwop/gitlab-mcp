@@ -2,6 +2,7 @@
 
 import {
   getConfig,
+  CF_TOKEN,
   ENABLE_DYNAMIC_API_URL,
   ENABLE_DYNAMIC_PROJECT_SCOPE,
   ENABLE_STRICT_PROJECT_SCOPE,
@@ -1917,6 +1918,7 @@ function updateSessionPublicBaseUrl(sessionId: string | undefined, publicBaseUrl
 const BASE_HEADERS: Record<string, string> = {
   Accept: "application/json",
   "Content-Type": "application/json",
+  ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
 };
 
 /**

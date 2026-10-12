@@ -2,6 +2,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { Express, Request, Response } from "express";
 import { fetch as undiciFetch, type Dispatcher } from "undici";
+import { CF_TOKEN } from "../config.js";
 import { decryptDownloadToken } from "../utils/download-token.js";
 import { fetchWithValidatedRedirects, UnsafeRedirectError } from "../utils/safe-redirect-fetch.js";
 
@@ -67,7 +68,10 @@ export function registerDownloadProxy(app: Express, deps: DownloadProxyDependenc
   };
 
   app.get("/downloads/:type", async (req: Request, res: Response) => {
-    const headers: Record<string, string> = { Accept: "application/octet-stream" };
+    const headers: Record<string, string> = {
+      Accept: "application/octet-stream",
+      ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
+    };
     let rateLimitKey: string;
 
     // Try embedded encrypted token first (self-contained URL), then headers
