@@ -33,11 +33,26 @@ doit donc rester intégrée ainsi (et **pas** en inline dans `index.ts`) :
    ```ts
    ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
    ```
-4. `docs/environment-variables.md` — entrée `### \`CF_TOKEN\`` après
+4. `docs/configuration/environment-variables.md` — entrée `### \`CF_TOKEN\`` après
    `GITLAB_AUTH_COOKIE_PATH`.
+5. `downloads/proxy.ts` — le proxy de téléchargement construit **ses propres
+   headers** sans passer par `BASE_HEADERS` : importer `CF_TOKEN` depuis
+   `../config.js` et ajouter le spread dans l'objet `headers` initial du
+   handler `/downloads/:type` :
+   ```ts
+   const headers: Record<string, string> = {
+     Accept: "application/octet-stream",
+     ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
+   };
+   ```
+
+> Vigilance à chaque resynchro : si l'upstream ajoute un nouveau chemin qui
+> appelle l'instance GitLab avec ses propres headers (comme `downloads/proxy.ts`),
+> y injecter aussi `cf-access-token`. Trou connu et assumé : les appels OAuth
+> (`oauth.ts`, `oauth-proxy.ts` vers `/oauth/token`) n'envoient pas le header.
 
 > Ne **pas** réintroduire la ligne `CF_TOKEN` dans le `README.md` : la doc des
-> variables d'env a été déplacée vers `docs/environment-variables.md` upstream.
+> variables d'env a été déplacée vers `docs/configuration/environment-variables.md` upstream.
 
 ## Procédure
 
@@ -47,14 +62,14 @@ doit donc rester intégrée ainsi (et **pas** en inline dans `index.ts`) :
 3. `git rebase upstream/main`
 4. **Conflits attendus** (l'upstream restructure souvent `index.ts` / `README.md`) :
    - Toujours **prendre le côté upstream** pour le code restructuré.
-   - Réintégrer la feature cloudflare aux 4 emplacements ci-dessus en
+   - Réintégrer la feature cloudflare aux 5 emplacements ci-dessus en
      respectant l'architecture upstream courante (vérifier où se trouvent
      `BASE_HEADERS`, le bloc d'import `./config.js`, et la doc des env vars —
      ils peuvent avoir bougé). Réutiliser le helper `getConfig(...)`.
    - `git add` les fichiers résolus, puis `git rebase --continue`
      (avec `GIT_EDITOR=true` pour ne pas bloquer sur l'éditeur).
 5. Vérifier : `npx tsc --noEmit` puis `npm run build`. Confirmer dans la sortie
-   compilée : `grep -n 'cf-access-token\|CF_TOKEN' build/index.js build/config.js`.
+   compilée : `grep -n 'cf-access-token\|CF_TOKEN' build/index.js build/config.js build/downloads/proxy.js`.
    - `npm run lint` échoue en l'absence de `eslint.config.js` : c'est un défaut
      **préexistant upstream**, sans rapport avec la feature — ne pas le corriger ici.
 6. Demander confirmation avant le push, puis :
@@ -66,7 +81,8 @@ doit donc rester intégrée ainsi (et **pas** en inline dans `index.ts`) :
 - `git log --oneline -3` : `main` = `upstream/main` + 1 commit
   « manage cloudflare header » au sommet.
 - `git show HEAD --stat` : uniquement `config.ts`, `index.ts`,
-  `docs/environment-variables.md` (≈8 insertions, aucune modif du `README.md`).
+  `docs/configuration/environment-variables.md`, `downloads/proxy.ts`
+  (≈13 insertions, aucune modif du `README.md`).
 - `npm run build` réussit.
 
 ## Règles
