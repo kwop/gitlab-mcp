@@ -12,7 +12,7 @@ Suis la procédure du skill **sync-upstream** (`.claude/skills/sync-upstream/SKI
 3. Résous les conflits en prenant le code upstream restructuré tout en
    réintégrant la feature cloudflare (`CF_TOKEN` dans `config.ts`, import dans
    `index.ts`, header `cf-access-token` dans `BASE_HEADERS`, doc dans
-   `docs/environment-variables.md`).
+   `docs/configuration/environment-variables.md`).
 4. Vérifie avec `npx tsc --noEmit` puis `npm run build`.
 5. **Demande-moi confirmation**, puis `git push --force-with-lease origin main`.
 
