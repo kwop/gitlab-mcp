@@ -11,9 +11,12 @@ Suis la procédure du skill **sync-upstream** (`.claude/skills/sync-upstream/SKI
 2. `git rebase upstream/main`.
 3. Résous les conflits en prenant le code upstream restructuré tout en
    réintégrant la feature cloudflare (`CF_TOKEN` dans `config.ts`, import dans
-   `index.ts`, header `cf-access-token` dans `BASE_HEADERS`, doc dans
+   `index.ts`, header `cf-access-token` dans `BASE_HEADERS` et
+   `downloads/proxy.ts`, `cf-access-token` dans `CREDENTIAL_HEADERS` de
+   `utils/safe-redirect-fetch.ts`, doc dans
    `docs/configuration/environment-variables.md`).
-4. Vérifie avec `npx tsc --noEmit` puis `npm run build`.
+4. Vérifie avec `npx tsc --noEmit`, `npm run build` et
+   `node --import tsx/esm --test test/utils/safe-redirect-fetch.test.ts`.
 5. **Demande-moi confirmation**, puis `git push --force-with-lease origin main`.
 
 Arguments éventuels : $ARGUMENTS (ex. `--no-push` pour s'arrêter avant le push).
