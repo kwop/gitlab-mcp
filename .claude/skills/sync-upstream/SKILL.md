@@ -30,10 +30,21 @@ doit donc rester intégrée ainsi (et **pas** en inline dans `index.ts`) :
    // Cloudflare Access token for GitLab instances protected by Cloudflare Access
    export const CF_TOKEN = getConfig("cf-token", "CF_TOKEN");
    ```
-2. `index.ts` — `CF_TOKEN` ajouté au bloc d'import `from "./config.js"`.
-3. `index.ts` — dans `const BASE_HEADERS` :
+2. `server/gitlab-request-context.ts` — `CF_TOKEN` ajouté au bloc d'import
+   `from "../config.js"`, et le spread dans `export const BASE_HEADERS` :
    ```ts
    ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
+   ```
+   (Depuis upstream v2.3.x, `BASE_HEADERS`, `buildAuthHeaders()` et
+   `getFetchConfig()` ont quitté `index.ts` pour ce module.)
+3. `index.ts` — `CF_TOKEN` ajouté au bloc d'import `from "./config.js"`, et le
+   spread dans l'objet `headers` de `probeGitLabUser()` (sonde `GET /user` de
+   la commande CLI `doctor --probe`, qui construit ses propres headers) :
+   ```ts
+   const headers: Record<string, string> = {
+     Accept: "application/json",
+     ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
+   };
    ```
 4. `docs/configuration/environment-variables.md` — entrée `### \`CF_TOKEN\`` après
    `GITLAB_AUTH_COOKIE_PATH`.
@@ -62,8 +73,15 @@ doit donc rester intégrée ainsi (et **pas** en inline dans `index.ts`) :
 > `getFetchConfig()` (dont `downloadRedirectOptions()`) héritent déjà de
 > `BASE_HEADERS`. Si un appelant de `fetchWithValidatedRedirects` passe sa propre
 > liste `credentialHeaders`, y ajouter aussi `cf-access-token`. Trou connu et
-> assumé : les appels OAuth (`oauth.ts`, `oauth-proxy.ts` vers `/oauth/token`)
-> n'envoient pas le header.
+> assumé : les appels OAuth (`oauth.ts`, `oauth-proxy.ts` vers `/oauth/token`,
+> `/oauth/token/info`, `/oauth/revoke`, et le contrôle de groupes
+> `/api/v4/groups` de `oauth-proxy.ts`) n'envoient pas le header.
+>
+> Audit rapide des appels qui ne passent ni par `getFetchConfig()` ni par
+> `BASE_HEADERS` : lister les `fetch(` / `undiciFetch(` /
+> `fetchWithValidatedRedirects(` hors `test/` et regarder les ~10 lignes
+> suivantes. Seuls doivent rester `downloads/proxy.ts`, `probeGitLabUser()` et
+> les appels OAuth ci-dessus.
 
 > Ne **pas** réintroduire la ligne `CF_TOKEN` dans le `README.md` : la doc des
 > variables d'env a été déplacée vers `docs/configuration/environment-variables.md` upstream.
@@ -83,7 +101,8 @@ doit donc rester intégrée ainsi (et **pas** en inline dans `index.ts`) :
    - `git add` les fichiers résolus, puis `git rebase --continue`
      (avec `GIT_EDITOR=true` pour ne pas bloquer sur l'éditeur).
 5. Vérifier : `npx tsc --noEmit` puis `npm run build`. Confirmer dans la sortie
-   compilée : `grep -n 'cf-access-token\|CF_TOKEN' build/index.js build/config.js build/downloads/proxy.js build/utils/safe-redirect-fetch.js`.
+   compilée : `grep -n 'cf-access-token\|CF_TOKEN' build/index.js build/config.js build/downloads/proxy.js build/utils/safe-redirect-fetch.js build/server/gitlab-request-context.js`.
+   - Si `package-lock.json` a changé : `npm ci` avant de compiler.
    - Test ciblé : `node --import tsx/esm --test test/utils/safe-redirect-fetch.test.ts`.
    - `npx prettier --check` sur les fichiers touchés. `npm run lint` passe
      depuis upstream v2.3.x (0 erreur ; les ~1000 warnings `no-explicit-any`
@@ -99,9 +118,9 @@ doit donc rester intégrée ainsi (et **pas** en inline dans `index.ts`) :
 - `git log --oneline upstream/main..HEAD` : « manage cloudflare header » juste
   au-dessus de `upstream/main`, suivi des commits d'outillage du fork.
 - `git show --stat <sha du commit cloudflare>` : uniquement `config.ts`, `index.ts`,
-  `docs/configuration/environment-variables.md`, `downloads/proxy.ts`,
-  `utils/safe-redirect-fetch.ts`, `test/utils/safe-redirect-fetch.test.ts`
-  (≈17 insertions, aucune modif du `README.md`).
+  `server/gitlab-request-context.ts`, `docs/configuration/environment-variables.md`,
+  `downloads/proxy.ts`, `utils/safe-redirect-fetch.ts`,
+  `test/utils/safe-redirect-fetch.test.ts` (≈22 insertions, aucune modif du `README.md`).
 - `npm run build` réussit.
 
 ## Règles
