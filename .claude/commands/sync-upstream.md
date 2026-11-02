@@ -10,9 +10,10 @@ Suis la procédure du skill **sync-upstream** (`.claude/skills/sync-upstream/SKI
 1. `git fetch upstream` et mesure l'écart avec `upstream/main`.
 2. `git rebase upstream/main`.
 3. Résous les conflits en prenant le code upstream restructuré tout en
-   réintégrant la feature cloudflare (`CF_TOKEN` dans `config.ts`, import dans
-   `index.ts`, header `cf-access-token` dans `BASE_HEADERS` et
-   `downloads/proxy.ts`, `cf-access-token` dans `CREDENTIAL_HEADERS` de
+   réintégrant la feature cloudflare (`CF_TOKEN` dans `config.ts`, header
+   `cf-access-token` dans `BASE_HEADERS` de `server/gitlab-request-context.ts`,
+   dans `probeGitLabUser()` de `index.ts` et dans `downloads/proxy.ts`,
+   `cf-access-token` dans `CREDENTIAL_HEADERS` de
    `utils/safe-redirect-fetch.ts`, doc dans
    `docs/configuration/environment-variables.md`).
 4. Vérifie avec `npx tsc --noEmit`, `npm run build` et
