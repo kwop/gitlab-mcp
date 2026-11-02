@@ -297,6 +297,7 @@ describe("credential headers across redirect hops", () => {
     Accept: "application/octet-stream",
     Authorization: "Bearer secret",
     "Private-Token": "secret",
+    "cf-access-token": "cf-secret",
   };
 
   test("keeps credentials on a same-origin hop", async () => {
@@ -313,6 +314,7 @@ describe("credential headers across redirect hops", () => {
     );
     assert.equal(calls[1].headers.Authorization, "Bearer secret");
     assert.equal(calls[1].headers["Private-Token"], "secret");
+    assert.equal(calls[1].headers["cf-access-token"], "cf-secret");
   });
 
   test("drops credential headers on a cross-origin hop to a public host", async () => {
@@ -326,6 +328,7 @@ describe("credential headers across redirect hops", () => {
     assert.equal(calls[0].headers["Private-Token"], "secret");
     assert.equal(calls[1].headers.Authorization, undefined);
     assert.equal(calls[1].headers["Private-Token"], undefined);
+    assert.equal(calls[1].headers["cf-access-token"], undefined);
     // Non-credential headers still travel with the request.
     assert.equal(calls[1].headers.Accept, "application/octet-stream");
   });
