@@ -12,6 +12,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { Logger } from "pino";
 import type { Dispatcher } from "undici";
 import {
+  CF_TOKEN,
   ENABLE_DYNAMIC_API_URL,
   ENABLE_DYNAMIC_PROJECT_SCOPE,
   GITLAB_JOB_TOKEN,
@@ -95,6 +96,7 @@ export function updateSessionPublicBaseUrl(
 export const BASE_HEADERS: Record<string, string> = {
   Accept: "application/json",
   "Content-Type": "application/json",
+  ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
 };
 
 /**

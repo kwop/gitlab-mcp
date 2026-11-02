@@ -3,6 +3,7 @@
 import {
   cliArgs,
   getConfig,
+  CF_TOKEN,
   ENABLE_DYNAMIC_API_URL,
   ENABLE_DYNAMIC_PROJECT_SCOPE,
   ENABLE_STRICT_PROJECT_SCOPE,
@@ -17342,7 +17343,10 @@ function hasCliCredentials(): boolean {
 }
 
 async function probeGitLabUser(apiUrl: string): Promise<DoctorProbeResult> {
-  const headers: Record<string, string> = { Accept: "application/json" };
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
+  };
   if (GITLAB_PERSONAL_ACCESS_TOKEN) {
     headers["PRIVATE-TOKEN"] = GITLAB_PERSONAL_ACCESS_TOKEN;
   } else if (GITLAB_JOB_TOKEN) {
