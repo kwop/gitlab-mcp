@@ -232,7 +232,8 @@ Cloudflare Access [service token](https://developers.cloudflare.com/cloudflare-o
 - Independent of `CF_TOKEN`: either mechanism works alone, and when both are configured the three headers are sent. Without these two variables nothing changes.
 - Both or nothing: if only one of the two is set (or one is empty), neither header is sent and the server logs a startup warning on stderr that names the missing variable, never a value.
 - Environment only. There is deliberately no CLI argument: a command-line argument is visible in the process list.
-- The two headers only go to the origin of the GitLab API URL the request is made for. When GitLab redirects to another origin (object storage, a CDN, an identity provider), they are removed from the redirected request. They are also redacted from logged `headers` objects.
+- The two headers go to the origin of the GitLab API URL the request is made for. When GitLab redirects to another origin (object storage, a CDN, an identity provider), they are removed from the redirected request. One exception: the download proxy (`/downloads/:type`) also keeps them on a redirect to a host declared in `GITLAB_API_URL` or `GITLAB_ALLOWED_HOSTS`, as it already does for the personal access token and `CF_TOKEN`. They are also redacted from logged `headers` objects.
+- If `GITLAB_GRAPHQL_URL` points to another origin than the GitLab API URL, the service token is not sent with GraphQL calls.
 - Same coverage as `CF_TOKEN`: the OAuth endpoints (`/oauth/token`, `/oauth/revoke`, …) used by `GITLAB_USE_OAUTH` and `GITLAB_MCP_OAUTH` do not receive Cloudflare headers.
 - With several GitLab API URLs (`GITLAB_API_URL` list, `ENABLE_DYNAMIC_API_URL`), the same service token is sent to each of them, as `CF_TOKEN` is. Only configure it when every listed instance is yours.
 
