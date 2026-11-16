@@ -29,9 +29,10 @@ Suis la procédure du skill **sync-upstream** (`.claude/skills/sync-upstream/SKI
    `test/utils/cloudflare-access.test.ts` et
    `test/cloudflare-access-service-token.test.ts`.
 4. Vérifie avec `npx tsc --noEmit`, `npm run build` et
-   `node --import tsx/esm --test test/utils/safe-redirect-fetch.test.ts
-   test/utils/cloudflare-access.test.ts
-   test/cloudflare-access-service-token.test.ts`.
+   `node --import tsx/esm --test` sur
+   `test/utils/safe-redirect-fetch.test.ts`,
+   `test/utils/cloudflare-access.test.ts` et
+   `test/cloudflare-access-service-token.test.ts`.
 5. **Demande-moi confirmation**, puis `git push --force-with-lease origin main`.
 
 Arguments éventuels : $ARGUMENTS (ex. `--no-push` pour s'arrêter avant le push).
