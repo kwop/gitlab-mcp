@@ -1,4 +1,9 @@
 import { parseCliArgs } from "./cli-boolean-flags.js";
+import {
+  CF_ACCESS_CLIENT_ID_ENV,
+  CF_ACCESS_CLIENT_SECRET_ENV,
+  resolveCloudflareAccessServiceTokenHeaders,
+} from "./cloudflare-access.js";
 import { deprecatedEnvInputFromSources, type DeprecatedEnvInput } from "./deprecated-env.js";
 import {
   readPersonalAccessTokenFile,
@@ -44,6 +49,22 @@ export const GITLAB_JOB_TOKEN = getConfig("job-token", "GITLAB_JOB_TOKEN");
 export const GITLAB_AUTH_COOKIE_PATH = getConfig("cookie-path", "GITLAB_AUTH_COOKIE_PATH");
 // Cloudflare Access token for GitLab instances protected by Cloudflare Access
 export const CF_TOKEN = getConfig("cf-token", "CF_TOKEN");
+
+function warnCloudflareAccessServiceToken(message: string): void {
+  const startupLogger = createLogger();
+  startupLogger.warn(message);
+  flushStartupLogs(startupLogger);
+}
+
+// Cloudflare Access service token (CF-Access-Client-Id / CF-Access-Client-Secret).
+// Independent of CF_TOKEN. Read from the environment only: there is no CLI flag,
+// because a command-line argument is visible in the process list. Empty unless
+// both variables are set, so it can be spread next to cf-access-token as is.
+export const CF_ACCESS_SERVICE_TOKEN_HEADERS = resolveCloudflareAccessServiceTokenHeaders({
+  clientId: process.env[CF_ACCESS_CLIENT_ID_ENV],
+  clientSecret: process.env[CF_ACCESS_CLIENT_SECRET_ENV],
+  warn: warnCloudflareAccessServiceToken,
+});
 export const USE_OAUTH = getConfig("use-oauth", "GITLAB_USE_OAUTH") === "true";
 export const IS_OLD = getConfig("is-old", "GITLAB_IS_OLD") === "true";
 

@@ -18,6 +18,8 @@ export const CREDENTIAL_HEADERS: readonly string[] = [
   "proxy-authorization",
   "cookie",
   "cf-access-token",
+  "cf-access-client-id",
+  "cf-access-client-secret",
 ];
 
 /**

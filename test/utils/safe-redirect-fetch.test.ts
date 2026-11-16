@@ -298,6 +298,8 @@ describe("credential headers across redirect hops", () => {
     Authorization: "Bearer secret",
     "Private-Token": "secret",
     "cf-access-token": "cf-secret",
+    "CF-Access-Client-Id": "dummy-client-id",
+    "CF-Access-Client-Secret": "dummy-client-secret",
   };
 
   test("keeps credentials on a same-origin hop", async () => {
@@ -315,6 +317,8 @@ describe("credential headers across redirect hops", () => {
     assert.equal(calls[1].headers.Authorization, "Bearer secret");
     assert.equal(calls[1].headers["Private-Token"], "secret");
     assert.equal(calls[1].headers["cf-access-token"], "cf-secret");
+    assert.equal(calls[1].headers["CF-Access-Client-Id"], "dummy-client-id");
+    assert.equal(calls[1].headers["CF-Access-Client-Secret"], "dummy-client-secret");
   });
 
   test("drops credential headers on a cross-origin hop to a public host", async () => {
@@ -329,6 +333,11 @@ describe("credential headers across redirect hops", () => {
     assert.equal(calls[1].headers.Authorization, undefined);
     assert.equal(calls[1].headers["Private-Token"], undefined);
     assert.equal(calls[1].headers["cf-access-token"], undefined);
+    // Sent to the GitLab origin, never to the host it redirects to.
+    assert.equal(calls[0].headers["CF-Access-Client-Id"], "dummy-client-id");
+    assert.equal(calls[0].headers["CF-Access-Client-Secret"], "dummy-client-secret");
+    assert.equal(calls[1].headers["CF-Access-Client-Id"], undefined);
+    assert.equal(calls[1].headers["CF-Access-Client-Secret"], undefined);
     // Non-credential headers still travel with the request.
     assert.equal(calls[1].headers.Accept, "application/octet-stream");
   });

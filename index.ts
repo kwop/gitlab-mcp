@@ -3,6 +3,7 @@
 import {
   cliArgs,
   getConfig,
+  CF_ACCESS_SERVICE_TOKEN_HEADERS,
   CF_TOKEN,
   ENABLE_DYNAMIC_API_URL,
   ENABLE_DYNAMIC_PROJECT_SCOPE,
@@ -17346,6 +17347,7 @@ async function probeGitLabUser(apiUrl: string): Promise<DoctorProbeResult> {
   const headers: Record<string, string> = {
     Accept: "application/json",
     ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
+    ...CF_ACCESS_SERVICE_TOKEN_HEADERS,
   };
   if (GITLAB_PERSONAL_ACCESS_TOKEN) {
     headers["PRIVATE-TOKEN"] = GITLAB_PERSONAL_ACCESS_TOKEN;
@@ -17353,7 +17355,14 @@ async function probeGitLabUser(apiUrl: string): Promise<DoctorProbeResult> {
     headers["JOB-TOKEN"] = GITLAB_JOB_TOKEN;
   }
   try {
-    const response = await fetch(`${apiUrl.replace(/\/$/, "")}/user`, { headers });
+    const response = await fetch(`${apiUrl.replace(/\/$/, "")}/user`, {
+      headers,
+      // Fork: this fetch has no guarded dispatcher, so with a Cloudflare Access
+      // service token a redirect is reported instead of followed with the secret.
+      ...(Object.keys(CF_ACCESS_SERVICE_TOKEN_HEADERS).length > 0
+        ? { redirect: "manual" as const }
+        : {}),
+    });
     if (response.ok) {
       return { ok: true, status: response.status, detail: `GET /user ${response.status}` };
     }
