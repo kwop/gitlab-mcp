@@ -285,6 +285,46 @@ Optional Netscape cookie file path for cookie-based authentication.
 
 Cloudflare Access token for GitLab instances protected by Cloudflare Access. When set, the `cf-access-token` header is included in all GitLab API requests. CLI arg: `--cf-token`.
 
+### `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`
+
+Cloudflare Access [service token](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/) for GitLab instances protected by Cloudflare Access. When **both** are set, GitLab API requests carry the `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers, in exactly the places where `cf-access-token` is sent.
+
+- Independent of `CF_TOKEN`: either mechanism works alone, and when both are configured the three headers are sent. Without these two variables nothing changes.
+- Both or nothing: if only one of the two is set (or one is empty), neither header is sent and the server logs a startup warning on stderr that names the missing variable, never a value.
+- Environment only. There is deliberately no CLI argument: a command-line argument is visible in the process list.
+- The two headers only go to the origin of the GitLab API URL the request is made for. When GitLab redirects to another origin (object storage, a CDN, an identity provider), they are removed from the redirected request. They are also redacted from logged `headers` objects.
+- Same coverage as `CF_TOKEN`: the OAuth endpoints (`/oauth/token`, `/oauth/revoke`, …) used by `GITLAB_USE_OAUTH` and `GITLAB_MCP_OAUTH` do not receive Cloudflare headers.
+- With several GitLab API URLs (`GITLAB_API_URL` list, `ENABLE_DYNAMIC_API_URL`), the same service token is sent to each of them, as `CF_TOKEN` is. Only configure it when every listed instance is yours.
+
+Do not write the values in an MCP client config file. Have a launcher read them from the OS keychain and export them to the server process instead. A generic macOS example (the keychain item names are placeholders):
+
+```bash
+#!/bin/sh
+# gitlab-mcp-launcher.sh: reads the service token from the macOS keychain.
+set -eu
+
+CF_ACCESS_CLIENT_ID="$(security find-generic-password \
+  -a "$USER" -s example-cf-access-client-id -w)"
+CF_ACCESS_CLIENT_SECRET="$(security find-generic-password \
+  -a "$USER" -s example-cf-access-client-secret -w)"
+export CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET
+
+export GITLAB_API_URL="https://gitlab.example.com/api/v4"
+exec npx -y github:kwop/gitlab-mcp "$@"
+```
+
+The MCP client then starts the launcher instead of `npx`, and its config holds no secret:
+
+```json
+{
+  "mcpServers": {
+    "gitlab": {
+      "command": "/path/to/gitlab-mcp-launcher.sh"
+    }
+  }
+}
+```
+
 ### `GITLAB_USE_OAUTH`
 
 Set to `true` to enable local browser-based OAuth2 authentication.

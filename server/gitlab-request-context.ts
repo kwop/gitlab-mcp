@@ -9,9 +9,11 @@
  * variables they replace were.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
+import { guardCloudflareAccessServiceToken } from "../cloudflare-access.js";
 import type { Logger } from "pino";
 import type { Dispatcher } from "undici";
 import {
+  CF_ACCESS_SERVICE_TOKEN_HEADERS,
   CF_TOKEN,
   ENABLE_DYNAMIC_API_URL,
   ENABLE_DYNAMIC_PROJECT_SCOPE,
@@ -97,6 +99,7 @@ export const BASE_HEADERS: Record<string, string> = {
   Accept: "application/json",
   "Content-Type": "application/json",
   ...(CF_TOKEN ? { "cf-access-token": CF_TOKEN } : {}),
+  ...CF_ACCESS_SERVICE_TOKEN_HEADERS,
 };
 
 /**
@@ -236,7 +239,13 @@ export const SESSION_PROJECT_SCOPE_MISMATCH = {
  */
 export const getFetchConfig = (): { headers: Record<string, string>; dispatcher: Dispatcher } => {
   const effectiveApiUrl = getEffectiveApiUrl();
-  const dispatcher = requireDeps().getDispatcherForUrl(effectiveApiUrl);
+  // Fork: a redirect to another origin must not carry the Cloudflare Access
+  // service token. Returns the pool dispatcher itself when none is configured.
+  const dispatcher = guardCloudflareAccessServiceToken(
+    requireDeps().getDispatcherForUrl(effectiveApiUrl),
+    effectiveApiUrl,
+    CF_ACCESS_SERVICE_TOKEN_HEADERS
+  );
 
   return {
     headers: { ...BASE_HEADERS, ...buildAuthHeaders() },
