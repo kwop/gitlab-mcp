@@ -98,7 +98,8 @@ doit donc rester intégrée ainsi (et **pas** en inline dans `index.ts`) :
 ## Le second changement à préserver : Cloudflare Access service token
 
 Quand `CF_ACCESS_CLIENT_ID` **et** `CF_ACCESS_CLIENT_SECRET` sont définies, chaque
-requête vers GitLab porte `CF-Access-Client-Id` et `CF-Access-Client-Secret`.
+appel à l'API GitLab (hors OAuth) porte `CF-Access-Client-Id` et
+`CF-Access-Client-Secret`.
 Une seule des deux : aucun des deux headers, et un warning de démarrage sur
 stderr qui nomme la variable, jamais sa valeur. Aucune des deux : rien ne change.
 
